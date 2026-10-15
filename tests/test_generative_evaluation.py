@@ -102,6 +102,18 @@ def test_fashion_mnist_classifier_and_generated_accuracy():
     assert 0.0 <= results["overall_accuracy"] <= 1.0
 
 
+def test_official_test_loader_provenance():
+    """Verify that official test loader loads 10,000 real images without synthetic fallback."""
+    from diffusionlab.evaluation.classifier import get_official_test_loader
+
+    loader = get_official_test_loader(data_dir="data", batch_size=64)
+    assert len(loader.dataset) == 10000
+    batch = next(iter(loader))
+    assert batch[0].shape == (64, 1, 28, 28)
+    assert batch[0].min() >= -1.0
+    assert batch[0].max() <= 1.0
+
+
 def test_measure_latency_trials():
     """Verify repeated latency trials with warm-up return median and variability."""
     schedule = get_beta_schedule("linear", timesteps=10)

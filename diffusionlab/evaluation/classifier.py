@@ -171,12 +171,26 @@ def train_eval_classifier(
     return model, final_val_acc
 
 
+def get_official_test_loader(data_dir: str = "data", batch_size: int = 128) -> DataLoader:
+    """Loads the official 10,000-sample Fashion-MNIST test dataset (train=False).
+
+    Guarantees evaluation against the standard benchmark split rather than a validation subset.
+    """
+    from torchvision.datasets import FashionMNIST
+
+    from diffusionlab.data.transforms import get_diffusion_transforms
+
+    transform = get_diffusion_transforms(28)
+    test_ds = FashionMNIST(root=data_dir, train=False, download=False, transform=transform)
+    return DataLoader(test_ds, batch_size=batch_size, shuffle=False)
+
+
 def load_or_train_classifier(
     data_dir: str = "data",
     ckpt_path: str | Path = "runs/classifier/fashion_mnist_classifier.pt",
     device: torch.device | str = "cpu",
-) -> tuple[FashionMNISTClassifier, float]:
-    """Loads existing trained classifier or trains a fresh one and returns real validation accuracy."""
+) -> tuple[FashionMNISTClassifier, dict[str, Any]]:
+    """Loads existing trained classifier or trains a fresh one and returns verified data provenance."""
     device = torch.device(device)
     ckpt_file = Path(ckpt_path)
 
@@ -188,7 +202,7 @@ def load_or_train_classifier(
         batch_size=64,
         val_split=0.1,
         num_workers=0,
-        use_synthetic_fallback=True,
+        use_synthetic_fallback=False,  # Strict: fail rather than silently falling back to synthetic
     )
 
     if ckpt_file.is_file():
@@ -197,17 +211,43 @@ def load_or_train_classifier(
             model = FashionMNISTClassifier().to(device)
             model.load_state_dict(ckpt["model_state_dict"])
             model.eval()
-            real_val_acc = evaluate_classifier_accuracy(model, val_loader, device=device)
-            print(f"Loaded independent classifier from {ckpt_file} | Verified Real Val Acc: {real_val_acc*100:.2f}%")
-            return model, real_val_acc
         except Exception as e:
             print(f"Could not load existing classifier checkpoint ({e}), retraining...")
+            model, _ = train_eval_classifier(
+                train_loader=train_loader,
+                val_loader=val_loader,
+                epochs=5,
+                device=device,
+                save_path=ckpt_file,
+            )
+    else:
+        model, _ = train_eval_classifier(
+            train_loader=train_loader,
+            val_loader=val_loader,
+            epochs=5,
+            device=device,
+            save_path=ckpt_file,
+        )
 
-    model, real_val_acc = train_eval_classifier(
-        train_loader=train_loader,
-        val_loader=val_loader,
-        epochs=5,
-        device=device,
-        save_path=ckpt_file,
+    # Verify both splits rigorously
+    val_acc = evaluate_classifier_accuracy(model, val_loader, device=device)
+    test_loader = get_official_test_loader(data_dir=data_dir)
+    official_test_acc = evaluate_classifier_accuracy(model, test_loader, device=device)
+
+    provenance = {
+        "checkpoint_path": str(ckpt_file.resolve()),
+        "dataset_name": "FashionMNIST",
+        "data_directory": str(Path(data_dir).resolve()),
+        "is_synthetic_fallback": False,
+        "official_test_accuracy": round(float(official_test_acc), 4),
+        "official_test_samples": len(test_loader.dataset),
+        "train_val_split_accuracy": round(float(val_acc), 4),
+        "train_val_split_samples": len(val_loader.dataset),
+        "train_samples": len(train_loader.dataset),
+    }
+
+    print(
+        f"Verified Classifier: Official Test Acc = {official_test_acc*100:.2f}% (10k images) | "
+        f"Val Split Acc = {val_acc*100:.2f}% (6k images)"
     )
-    return model, real_val_acc
+    return model, provenance

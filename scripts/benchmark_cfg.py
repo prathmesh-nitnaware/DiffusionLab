@@ -133,20 +133,18 @@ def main():
 
     # 1. Independent Classifier Setup & Real Data Validation
     print("\n=== Phase 1: Independent Evaluator Classifier Setup & Real Data Validation ===")
-    classifier, real_test_acc = load_or_train_classifier(
+    classifier, provenance = load_or_train_classifier(
         data_dir=data_cfg.get("data_dir", "data"),
         ckpt_path="runs/classifier/fashion_mnist_classifier.pt",
         device=device,
     )
-    real_validation_data = {
-        "model": "FashionMNISTClassifier",
-        "held_out_real_test_accuracy": round(real_test_acc, 4),
-        "device": str(device),
-        "notes": "Independently trained convolutional classifier verified on held-out real validation data.",
-    }
     with open(output_dir / "real_classifier_validation.json", "w", encoding="utf-8") as f:
-        json.dump(real_validation_data, f, indent=2)
-    print(f"Verified Independent Classifier Accuracy on Real Data: {real_test_acc*100:.2f}%\n")
+        json.dump(provenance, f, indent=2)
+    print(
+        f"Verified Independent Classifier Accuracy:\n"
+        f"  - Official 10k Test Set (train=False): {provenance['official_test_accuracy']*100:.2f}%\n"
+        f"  - 6k Train Validation Split: {provenance['train_val_split_accuracy']*100:.2f}%\n"
+    )
 
     # 2. Guidance Scale Sweep Benchmark Across All 10 Classes
     print(f"=== Phase 2: Guidance Scale Sweep Across All 10 Classes (Steps: {args.steps}) ===")
