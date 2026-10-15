@@ -24,14 +24,21 @@ class DDPMSampler:
         self,
         x_t: torch.Tensor,
         t_index: int,
+        y: torch.Tensor | None = None,
+        guidance_scale: float = 1.0,
         clip_denoised: bool = True,
     ) -> torch.Tensor:
         """Sample x_{t-1} from p_theta(x_{t-1} | x_t) at discrete timestep t_index."""
         device = x_t.device
         t_tensor = torch.full((x_t.shape[0],), t_index, device=device, dtype=torch.long)
 
-        # 1. Predict noise epsilon_theta(x_t, t)
-        pred_noise = self.model(x_t, t_tensor)
+        # 1. Predict noise epsilon_theta(x_t, t) with optional classifier-free guidance
+        if hasattr(self.model, "forward_with_cfg") and y is not None and guidance_scale != 1.0:
+            pred_noise = self.model.forward_with_cfg(x_t, t_tensor, y=y, guidance_scale=guidance_scale)
+        elif y is not None:
+            pred_noise = self.model(x_t, t_tensor, y=y)
+        else:
+            pred_noise = self.model(x_t, t_tensor)
 
         # 2. Predict clean image x_0
         sqrt_recip_alpha_bar = extract(self.schedule.sqrt_recip_alphas_cumprod, t_tensor, x_t.shape)
@@ -62,6 +69,8 @@ class DDPMSampler:
         self,
         shape: tuple[int, ...],
         device: torch.device | str = "cpu",
+        y: torch.Tensor | int | None = None,
+        guidance_scale: float = 1.0,
         seed: int | None = None,
         clip_denoised: bool = True,
         save_intermediate_steps: int | None = None,
@@ -72,6 +81,8 @@ class DDPMSampler:
         Args:
             shape: Target sample shape [B, C, H, W].
             device: Computation device.
+            y: Optional class labels [B] or int for conditional generation.
+            guidance_scale: CFG guidance scale (>1.0 to amplify condition).
             seed: Optional random seed for reproducible generation.
             clip_denoised: Whether to clamp predicted x_0 to [-1, 1].
             save_intermediate_steps: If provided, records intermediate images every N steps.
@@ -86,6 +97,11 @@ class DDPMSampler:
         device = torch.device(device)
         self.model.eval()
 
+        if isinstance(y, int):
+            y = torch.full((shape[0],), y, device=device, dtype=torch.long)
+        elif isinstance(y, torch.Tensor):
+            y = y.to(device)
+
         # Initialize from standard Gaussian noise x_T ~ N(0, I)
         x = torch.randn(shape, device=device)
         intermediates: list[torch.Tensor] = [x.clone()]
@@ -94,7 +110,13 @@ class DDPMSampler:
         iterator = tqdm(timesteps, desc="DDPM Sampling", leave=False) if show_progress else timesteps
 
         for t in iterator:
-            x = self.p_sample(x, t, clip_denoised=clip_denoised)
+            x = self.p_sample(
+                x,
+                t,
+                y=y,
+                guidance_scale=guidance_scale,
+                clip_denoised=clip_denoised,
+            )
 
             if save_intermediate_steps is not None and (
                 t % save_intermediate_steps == 0 or t == 0
@@ -134,18 +156,22 @@ class DDIMSampler:
         shape: tuple[int, ...],
         num_inference_steps: int = 50,
         eta: float = 0.0,
+        y: torch.Tensor | int | None = None,
+        guidance_scale: float = 1.0,
         device: torch.device | str = "cpu",
         seed: int | None = None,
         clip_denoised: bool = True,
         save_intermediate: bool = False,
         show_progress: bool = True,
     ) -> tuple[torch.Tensor, list[torch.Tensor]]:
-        """Generate samples using DDIM.
+        """Generate samples using DDIM with optional Classifier-Free Guidance.
 
         Args:
             shape: Target sample shape [B, C, H, W].
             num_inference_steps: Number of sampling steps (e.g., 50, 100, 250, 1000).
             eta: Weight of stochastic noise. eta=0.0 corresponds to deterministic DDIM (ODE).
+            y: Optional class labels [B] or int for conditional generation.
+            guidance_scale: Strength of CFG (1.0 = standard, >1.0 = amplified).
             device: Target device.
             seed: Optional seed for reproducible generation.
             clip_denoised: Clamp predicted clean image to [-1, 1].
@@ -160,6 +186,11 @@ class DDIMSampler:
 
         device = torch.device(device)
         self.model.eval()
+
+        if isinstance(y, int):
+            y = torch.full((shape[0],), y, device=device, dtype=torch.long)
+        elif isinstance(y, torch.Tensor):
+            y = y.to(device)
 
         time_seq = self._get_timestep_sequence(num_inference_steps)
         # Previous timesteps: [t_{s-1}, ..., 0, -1]
@@ -179,8 +210,13 @@ class DDIMSampler:
         for t_curr, t_prev in iterator:
             t_tensor = torch.full((shape[0],), t_curr, device=device, dtype=torch.long)
 
-            # 1. Predict noise epsilon_theta(x_t, t)
-            pred_noise = self.model(x, t_tensor)
+            # 1. Predict noise epsilon_theta(x_t, t) with optional CFG
+            if hasattr(self.model, "forward_with_cfg") and y is not None and guidance_scale != 1.0:
+                pred_noise = self.model.forward_with_cfg(x, t_tensor, y=y, guidance_scale=guidance_scale)
+            elif y is not None:
+                pred_noise = self.model(x, t_tensor, y=y)
+            else:
+                pred_noise = self.model(x, t_tensor)
 
             # 2. Extract alpha_bar_t and alpha_bar_prev
             alpha_bar_t = alphas_cumprod[t_curr]

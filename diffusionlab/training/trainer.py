@@ -7,7 +7,24 @@ from typing import Any
 import torch
 from torch import nn, optim
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
+
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except (ImportError, ModuleNotFoundError):
+    class SummaryWriter:  # type: ignore
+        """Fallback logger when tensorboard is not installed."""
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def add_scalar(self, *args, **kwargs):
+            pass
+
+        def add_image(self, *args, **kwargs):
+            pass
+
+        def close(self):
+            pass
 
 from diffusionlab.data.transforms import tensor_to_pil_grid
 from diffusionlab.diffusion.forward_process import ForwardDiffusion
@@ -27,6 +44,7 @@ class DiffusionTrainer:
         scheduler: Any | None = None,
         config: dict[str, Any] | None = None,
         device: torch.device | str | None = None,
+        p_uncond: float | None = None,
     ):
         self.config = config or {}
         train_cfg = self.config.get("training", self.config)
@@ -54,6 +72,10 @@ class DiffusionTrainer:
         # Training hyperparams
         self.epochs = train_cfg.get("epochs", 10)
         self.max_grad_norm = train_cfg.get("max_grad_norm", 1.0)
+        if p_uncond is not None:
+            self.p_uncond = float(p_uncond)
+        else:
+            self.p_uncond = float(train_cfg.get("p_uncond", 0.1))  # CFG condition dropout probability
         self.log_interval = train_cfg.get("log_interval", 10)
         self.sample_interval = train_cfg.get("sample_interval_epochs", 1)
         self.save_interval = train_cfg.get("save_interval_epochs", 1)
@@ -77,7 +99,7 @@ class DiffusionTrainer:
         self.start_epoch = 0
         self.best_val_loss = float("inf")
 
-    def train_step(self, x_0: torch.Tensor) -> float:
+    def train_step(self, x_0: torch.Tensor, y: torch.Tensor | None = None) -> float:
         """Executes a single genuine training step on a clean image batch."""
         self.model.train()
         x_0 = x_0.to(self.device)
@@ -92,11 +114,19 @@ class DiffusionTrainer:
         # 3. Add noise to clean image using forward diffusion
         x_t = self.forward_diff.q_sample(x_0, t, noise=noise)
 
-        # 4. Predict noise with model
+        # 4. Handle conditioning and condition dropout for CFG
+        is_conditional = hasattr(self.model, "label_emb") and self.model.label_emb is not None
+        if is_conditional and y is not None:
+            y = y.to(self.device)
+            if self.p_uncond > 0.0:
+                mask = torch.rand(y.shape, device=self.device) < self.p_uncond
+                y = torch.where(mask, torch.full_like(y, self.model.null_label), y)
+
+        # 5. Predict noise with model
         self.optimizer.zero_grad()
         if self.use_amp:
             with torch.cuda.amp.autocast():
-                pred_noise = self.model(x_t, t)
+                pred_noise = self.model(x_t, t, y=y) if is_conditional else self.model(x_t, t)
                 loss = nn.functional.mse_loss(pred_noise, noise)
             self.scaler.scale(loss).backward()
             if self.max_grad_norm > 0:
@@ -105,7 +135,7 @@ class DiffusionTrainer:
             self.scaler.step(self.optimizer)
             self.scaler.update()
         else:
-            pred_noise = self.model(x_t, t)
+            pred_noise = self.model(x_t, t, y=y) if is_conditional else self.model(x_t, t)
             loss = nn.functional.mse_loss(pred_noise, noise)
             loss.backward()
             if self.max_grad_norm > 0:
@@ -124,9 +154,13 @@ class DiffusionTrainer:
         self.model.eval()
         total_loss = 0.0
         batches = 0
+        is_conditional = hasattr(self.model, "label_emb") and self.model.label_emb is not None
 
         for batch in self.val_loader:
-            x_0 = batch[0] if isinstance(batch, (list, tuple)) else batch
+            if isinstance(batch, (list, tuple)) and len(batch) >= 2:
+                x_0, y = batch[0], batch[1].to(self.device)
+            else:
+                x_0, y = (batch[0] if isinstance(batch, (list, tuple)) else batch), None
             x_0 = x_0.to(self.device)
             B = x_0.shape[0]
 
@@ -134,7 +168,7 @@ class DiffusionTrainer:
             noise = torch.randn_like(x_0)
             x_t = self.forward_diff.q_sample(x_0, t, noise=noise)
 
-            pred_noise = self.model(x_t, t)
+            pred_noise = self.model(x_t, t, y=y) if is_conditional else self.model(x_t, t)
             loss = nn.functional.mse_loss(pred_noise, noise)
             total_loss += loss.item()
             batches += 1
@@ -153,11 +187,22 @@ class DiffusionTrainer:
         img_size = self.config.get("img_size", 28)
         shape = (num_images, img_channels, img_size, img_size)
 
-        samples, _ = sampler.sample(
-            shape=shape,
-            device=self.device,
-            show_progress=False,
-        )
+        if hasattr(self.model, "num_classes") and self.model.num_classes is not None:
+            # Generate conditional samples across classes with guidance scale 2.0
+            y_sample = torch.arange(num_images, device=self.device) % self.model.num_classes
+            samples, _ = sampler.sample(
+                shape=shape,
+                device=self.device,
+                y=y_sample,
+                guidance_scale=2.0,
+                show_progress=False,
+            )
+        else:
+            samples, _ = sampler.sample(
+                shape=shape,
+                device=self.device,
+                show_progress=False,
+            )
 
         pil_grid = tensor_to_pil_grid(samples, nrow=int(num_images**0.5))
         sample_path = self.sample_dir / f"samples_epoch_{epoch:04d}.png"
@@ -193,8 +238,11 @@ class DiffusionTrainer:
             steps_in_epoch = 0
 
             for batch_idx, batch in enumerate(self.train_loader):
-                x_0 = batch[0] if isinstance(batch, (list, tuple)) else batch
-                step_loss = self.train_step(x_0)
+                if isinstance(batch, (list, tuple)) and len(batch) >= 2:
+                    x_0, y = batch[0], batch[1]
+                else:
+                    x_0, y = (batch[0] if isinstance(batch, (list, tuple)) else batch), None
+                step_loss = self.train_step(x_0, y=y)
                 epoch_loss += step_loss
                 steps_in_epoch += 1
 

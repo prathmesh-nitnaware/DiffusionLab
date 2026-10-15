@@ -92,6 +92,7 @@ def main():
         num_res_blocks=model_cfg.get("num_res_blocks", 2),
         attention_resolutions=model_cfg.get("attention_resolutions", (2,)),
         dropout=model_cfg.get("dropout", 0.0),
+        num_classes=model_cfg.get("num_classes", None),
     ).to(device)
 
     print(f"Model instantiated with {model.num_parameters():,} trainable parameters.")
@@ -125,6 +126,7 @@ def main():
         scheduler=scheduler,
         config=full_config,
         device=device,
+        p_uncond=train_cfg.get("p_uncond", 0.1),
     )
     trainer.start_epoch = start_epoch
 
