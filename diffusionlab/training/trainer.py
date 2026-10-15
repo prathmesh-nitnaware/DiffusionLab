@@ -1,5 +1,4 @@
-"""Training engine for diffusion models."""
-
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -28,7 +27,7 @@ except (ImportError, ModuleNotFoundError):
 
 from diffusionlab.data.transforms import tensor_to_pil_grid
 from diffusionlab.diffusion.forward_process import ForwardDiffusion
-from diffusionlab.training.checkpointing import save_checkpoint
+from diffusionlab.training.checkpointing import load_checkpoint, save_checkpoint
 
 
 class DiffusionTrainer:
@@ -45,9 +44,15 @@ class DiffusionTrainer:
         config: dict[str, Any] | None = None,
         device: torch.device | str | None = None,
         p_uncond: float | None = None,
+        seed: int | None = None,
     ):
         self.config = config or {}
         train_cfg = self.config.get("training", self.config)
+
+        # Reproducibility seed
+        self.seed = seed if seed is not None else train_cfg.get("seed", 42)
+        if self.seed is not None:
+            torch.manual_seed(self.seed)
 
         # Device selection: support CUDA automatically when available, otherwise CPU
         if device is None:
@@ -98,6 +103,31 @@ class DiffusionTrainer:
         self.global_step = 0
         self.start_epoch = 0
         self.best_val_loss = float("inf")
+
+    def resume_from_checkpoint(
+        self,
+        checkpoint_path: str | Path,
+        restore_rng: bool = False,
+    ) -> dict[str, Any]:
+        """Restore model, optimizer, scheduler, epoch, global step, and best loss from checkpoint."""
+        ckpt = load_checkpoint(
+            checkpoint_path,
+            model=self.model,
+            optimizer=self.optimizer,
+            scheduler=self.scheduler,
+            scaler=self.scaler,
+            device=self.device,
+            restore_rng=restore_rng,
+        )
+        self.start_epoch = int(ckpt.get("epoch", 0))
+        self.global_step = int(ckpt.get("global_step", 0))
+        if "loss" in ckpt:
+            self.best_val_loss = float(ckpt["loss"])
+        print(
+            f"Resumed trainer from checkpoint: {checkpoint_path} "
+            f"(start_epoch={self.start_epoch}, global_step={self.global_step}, best_loss={self.best_val_loss:.4f})"
+        )
+        return ckpt
 
     def train_step(self, x_0: torch.Tensor, y: torch.Tensor | None = None) -> float:
         """Executes a single genuine training step on a clean image batch."""
@@ -175,8 +205,13 @@ class DiffusionTrainer:
 
         return total_loss / max(1, batches)
 
-    def generate_and_save_samples(self, epoch: int, num_images: int = 16) -> Path:
-        """Fast sample generation during training using reverse diffusion."""
+    def generate_and_save_samples(
+        self,
+        epoch: int,
+        num_images: int = 16,
+        seed: int = 42,
+    ) -> Path:
+        """Fast sample generation during training using reverse diffusion with fixed seed for comparability."""
         from diffusionlab.diffusion.samplers import DDPMSampler
 
         self.model.eval()
@@ -188,19 +223,21 @@ class DiffusionTrainer:
         shape = (num_images, img_channels, img_size, img_size)
 
         if hasattr(self.model, "num_classes") and self.model.num_classes is not None:
-            # Generate conditional samples across classes with guidance scale 2.0
+            # Generate conditional samples across classes with guidance scale 2.0 and fixed seed
             y_sample = torch.arange(num_images, device=self.device) % self.model.num_classes
             samples, _ = sampler.sample(
                 shape=shape,
                 device=self.device,
                 y=y_sample,
                 guidance_scale=2.0,
+                seed=seed,
                 show_progress=False,
             )
         else:
             samples, _ = sampler.sample(
                 shape=shape,
                 device=self.device,
+                seed=seed,
                 show_progress=False,
             )
 
@@ -218,10 +255,11 @@ class DiffusionTrainer:
         Returns:
             Dictionary with training history metrics.
         """
-        history = {
+        history: dict[str, Any] = {
             "train_loss": [],
             "val_loss": [],
             "epoch_times": [],
+            "step_losses": [],
             "total_steps": 0,
         }
 
@@ -229,6 +267,31 @@ class DiffusionTrainer:
             f"Starting {'SMOKE TEST' if smoke_test else 'TRAINING'} | "
             f"Device: {self.device.type.upper()} | Model Parameters: {self.model.num_parameters():,}"
         )
+
+        # Save run metadata provenance
+        run_metadata = {
+            "config": self.config,
+            "device": str(self.device),
+            "model_parameters": self.model.num_parameters(),
+            "seed": getattr(self, "seed", None),
+            "p_uncond": self.p_uncond,
+            "epochs": self.epochs,
+            "start_epoch": self.start_epoch,
+            "train_samples": (
+                len(self.train_loader.dataset)
+                if (self.train_loader is not None and hasattr(self.train_loader, "dataset"))
+                else 0
+            ),
+            "val_samples": (
+                len(self.val_loader.dataset)
+                if (self.val_loader is not None and hasattr(self.val_loader, "dataset"))
+                else 0
+            ),
+            "batch_size": getattr(self.train_loader, "batch_size", None),
+            "start_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        with open(self.run_dir / "run_metadata.json", "w", encoding="utf-8") as f:
+            json.dump(run_metadata, f, indent=2)
 
         start_time = time.time()
 
@@ -248,6 +311,10 @@ class DiffusionTrainer:
 
                 if self.global_step % self.log_interval == 0 or smoke_test:
                     self.writer.add_scalar("Train/Loss_Step", step_loss, self.global_step)
+                    history["step_losses"].append({
+                        "global_step": self.global_step,
+                        "loss": round(step_loss, 6),
+                    })
                     print(
                         f"Epoch [{epoch + 1}/{self.epochs}] Step [{self.global_step}] - "
                         f"Loss: {step_loss:.4f}"
@@ -311,7 +378,7 @@ class DiffusionTrainer:
             # Periodic sample generation (skip if smoke_test unless explicitly desired)
             if not smoke_test and (epoch + 1) % self.sample_interval == 0:
                 try:
-                    self.generate_and_save_samples(epoch + 1, num_images=self.num_sample_images)
+                    self.generate_and_save_samples(epoch + 1, num_images=self.num_sample_images, seed=42)
                 except Exception as e:
                     print(f"[Warning] Sample generation skipped during training: {e}")
 
@@ -321,5 +388,50 @@ class DiffusionTrainer:
         total_duration = time.time() - start_time
         history["total_steps"] = self.global_step
         history["total_duration"] = total_duration
+        history["best_val_loss"] = self.best_val_loss
+
+        # Write training history JSON
+        with open(self.run_dir / "training_history.json", "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "train_loss": history["train_loss"],
+                    "val_loss": history["val_loss"],
+                    "epoch_times": history["epoch_times"],
+                    "step_losses": history.get("step_losses", []),
+                    "total_steps": self.global_step,
+                    "total_duration_s": total_duration,
+                    "best_val_loss": self.best_val_loss,
+                },
+                f,
+                indent=2,
+            )
+
+        # Auto-plot loss curve if matplotlib is available
+        try:
+            import matplotlib.pyplot as plt
+
+            epochs_range = list(range(1, len(history["train_loss"]) + 1))
+            plt.figure(figsize=(7, 4.5), dpi=120)
+            plt.plot(epochs_range, history["train_loss"], marker="o", color="#2563EB", label="Train Loss")
+            if history["val_loss"] and any(v > 0 for v in history["val_loss"]):
+                plt.plot(
+                    epochs_range,
+                    history["val_loss"],
+                    marker="s",
+                    color="#DC2626",
+                    linestyle="--",
+                    label="Val Loss",
+                )
+            plt.title("DiffusionLab: Training Loss Curve", fontweight="bold")
+            plt.xlabel("Epoch")
+            plt.ylabel("MSE Loss")
+            plt.grid(True, linestyle="--", alpha=0.5)
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(self.run_dir / "training_loss.png")
+            plt.close()
+        except Exception as e:
+            print(f"[Warning] Auto-generation of loss plot skipped: {e}")
+
         self.writer.close()
         return history

@@ -1,8 +1,54 @@
-# 🔬 DiffusionLab
+# 👗 DiffusionLab — Fashion Image Generation Using DDPM
 
-> **A Rigorous Research Implementation of Denoising Diffusion Probabilistic Models (DDPM) and Denoising Diffusion Implicit Models (DDIM) in PyTorch.**
+> **A functional end-to-end Deep Learning mini-project implementing Denoising Diffusion Probabilistic Models (DDPM) and Denoising Diffusion Implicit Models (DDIM) for Fashion-MNIST image generation.**
 
-DiffusionLab is a modular, mathematically rigorous Deep Learning research platform implementing continuous and discrete diffusion models from scratch. It features a custom timestep-conditioned U-Net with sinusoidal embeddings, linear and cosine variance schedules, ancestral DDPM reverse sampling, accelerated DDIM sampling, quantitative evaluation, benchmark profiling, and an interactive Gradio web demonstration.
+DiffusionLab demonstrates the core principles of generative diffusion models:
+1. **Forward Diffusion Process**: Progressive Gaussian noise injection across discrete timesteps using cosine beta schedules.
+2. **Noise-Prediction U-Net**: A compact, custom timestep-conditioned U-Net (164k parameters) with sinusoidal temporal embeddings and class conditioning.
+3. **Reverse Sampling**: Both ancestral DDPM (stochastic) and accelerated DDIM (deterministic/ODE) reverse sampling.
+4. **Hardware Flexibility**: Automatic GPU execution when CUDA is available, with seamless CPU fallback.
+5. **Interactive Demonstration**: A lightweight, responsive Gradio web interface for sampling and visual inspection.
+
+---
+
+## ⚡ Mini-Project Quickstart (5 Minutes)
+
+### 1. Environment & Hardware Verification
+Verify Python, PyTorch, and whether GPU/CUDA is available:
+```powershell
+python -c "import torch; print('PyTorch:', torch.__version__, '| CUDA available:', torch.cuda.is_available(), '| Device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
+```
+*(DiffusionLab automatically uses CUDA if available, and gracefully falls back to CPU.)*
+
+### 2. Practical Mini-Project Training (3 Epochs, ~70s on CPU)
+Train on genuine Fashion-MNIST data:
+```powershell
+python scripts/train.py --config configs/fashion_mnist_mini_project.yaml
+```
+- **Checkpoints saved to**: `runs/fashion_mnist_mini_project/checkpoints/` (`best_model.pt`, `latest_model.pt`)
+- **Loss curve saved to**: `runs/fashion_mnist_mini_project/training_loss.png`
+- **Samples saved to**: `runs/fashion_mnist_mini_project/samples/`
+
+### 3. Generate Image Grids
+Generate a 16-sample multi-class image grid using accelerated DDIM sampling (25 steps):
+```powershell
+python scripts/generate.py --checkpoint runs/fashion_mnist_mini_project/checkpoints/best_model.pt --sampler ddim --steps 25 --guidance-scale 2.0 --num-samples 16 --output runs/fashion_mnist_mini_project/samples/sample_grid_ddim_25steps.png
+```
+
+### 4. Plot Training Loss
+```powershell
+python scripts/plot_loss.py --history runs/fashion_mnist_mini_project/training_history.json --output runs/fashion_mnist_mini_project/loss_curve.png
+```
+
+### 5. Launch Interactive Gradio Web Demo
+```powershell
+python app/app.py --port 7860
+```
+Open [http://localhost:7860](http://localhost:7860) in your browser to interactively choose class labels, guidance scale, and sampling steps!
+
+> [!NOTE]
+> **Scientific Integrity & Honest Output Assessment**:
+> The 3-epoch mini-project run finishes in ~70 seconds and verifies full pipeline functionality (loss decreases from 0.3178 to 0.1502). At 3 epochs on CPU, generated images display coarse silhouettes and dark backgrounds rather than fine-grain textures. Full multi-epoch convergence on GPU can be launched via `configs/fashion_mnist_conditional_convergence.yaml`.
 
 ---
 
@@ -17,19 +63,9 @@ DiffusionLab is a modular, mathematically rigorous Deep Learning research platfo
 3. [Neural Network Architecture](#neural-network-architecture)
 4. [Repository Structure](#repository-structure)
 5. [Environment Setup & Installation](#environment-setup--installation)
-6. [Usage Guide (PowerShell Commands)](#usage-guide-powershell-commands)
-   - [1. Running Automated Tests](#1-running-automated-tests)
-   - [2. Code Quality & Linting](#2-code-quality--linting)
-   - [3. Training Smoke Test](#3-training-smoke-test)
-   - [4. Training Baseline Model](#4-training-baseline-model)
-   - [5. Resuming from a Checkpoint](#5-resuming-from-a-checkpoint)
-   - [6. Generating Images (DDPM & DDIM)](#6-generating-images-ddpm--ddim)
-   - [7. Sampling Performance Benchmarks](#7-sampling-performance-benchmarks)
-   - [8. Running Controlled Experiments](#8-running-controlled-experiments)
-   - [9. Launching Gradio Web App](#9-launching-gradio-web-app)
+6. [Detailed Usage Guide](#detailed-usage-guide)
 7. [Empirical Experimental Results](#empirical-experimental-results)
-8. [FID on Fashion-MNIST: Scientific Limitations](#fid-on-fashion-mnist-scientific-limitations)
-9. [Hardware & Reproducibility](#hardware--reproducibility)
+8. [Hardware & Reproducibility](#hardware--reproducibility)
 
 ---
 
@@ -280,13 +316,47 @@ Run Experiments A, B, and C with automated figure generation:
 .\.venv\Scripts\python scripts/run_experiments.py --experiments A B C --output-dir reports/experiments
 ```
 
-### 9. Launching Gradio Web App
+### 9. Launching Interactive AI Research Studio
 
-Launch the interactive web demo:
+Launch the comprehensive 6-tab AI research dashboard:
 
 ```powershell
-.\.venv\Scripts\python app/app.py --port 7860
+python app/app.py --port 7860
 ```
+Open [http://localhost:7860](http://localhost:7860) to explore the following research studio modules:
+
+1. **🎨 Generate Studio**:
+   - **Fashion-MNIST Class Selector**: Steer generation across all 10 categories (`T-shirt/top`, `Trouser`, `Pullover`, `Dress`, `Coat`, `Sandal`, `Shirt`, `Sneaker`, `Bag`, `Ankle boot`).
+   - **Sampler Engine**: Choose between ancestral **DDPM** ($T=200$) and accelerated **DDIM** ($5 \text{ to } 50$ steps).
+   - **Conditioning & CFG**: Configurable guidance scale ($w \in [1.0, 5.0]$) and random noise seed control.
+   - **Live Diagnostics**: Displays elapsed inference time, throughput ($\text{img/s}$), active hardware device (`CUDA` / `CPU`), and downloadable image grid.
+
+2. **🔬 Interactive Diffusion Lab**:
+   - **Forward Diffusion Process ($x_0 \to x_t$)**: Select real Fashion-MNIST test images and view closed-form Gaussian noise addition at any timestep $t \in [0, 199]$.
+   - **Live Mathematical Parameters**: Inspect exact values for signal retention ($\sqrt{\bar{\alpha}_t}$), noise scale ($\sqrt{1 - \bar{\alpha}_t}$), step variance ($\beta_t$), and Signal-to-Noise Ratio ($\text{SNR}_\text{dB}$).
+   - **Reverse Trajectory Breakdown ($x_T \to x_0$)**: Record and inspect intermediate denoising states showing how pure Gaussian noise resolves into coherent garment silhouettes.
+
+3. **📈 Training Dashboard**:
+   - **Real Run Analytics**: Select recorded training runs (`runs/fashion_mnist_mini_project`) to inspect genuine loss curves (`loss_curve.png`).
+   - **KPI Metric Cards**: Displays completed epochs, optimizer steps, final train loss, best validation loss, run duration, U-Net parameter count (164,689 weights), and hardware accelerator.
+   - **Resolved Configuration**: Inspect full hyperparameters and architecture settings.
+
+4. **🏷️ Class Explorer**:
+   - **Visual Gallery**: Displays all 10 Fashion-MNIST reference categories.
+   - **Multi-Class Comparison**: Generates side-by-side samples across selected categories holding the initial noise seed constant to clearly visualize semantic steering.
+   - **Graceful Unconditional Handling**: Clearly explains limitations if an unconditional model is loaded rather than simulating fake steering.
+
+5. **📊 Evaluation Dashboard**:
+   - **Quantitative Benchmarks**: Visualizes authentic CFG tradeoff curves, guidance dynamics over timesteps, and sample grids.
+   - **Classifier Evaluation**: Displays independently verified classifier performance (91.25% test accuracy on official Fashion-MNIST test set).
+   - **Scientific Integrity Caveat**: Clear academic callout emphasizing that classifier accuracy alone does not equal perceptual sample fidelity.
+
+6. **📖 About & Methodology**:
+   - Theoretical breakdown covering Markovian forward processes, custom sinusoidal timestep embeddings, wide residual blocks, accelerated DDIM ODE sampling, and Classifier-Free Guidance equations.
+
+> [!TIP]
+> **Robust Checkpoint Loading**:
+> The studio automatically filters checkpoint directories, ensuring only genuine diffusion U-Net weights are loaded. Classifier checkpoints (`runs/classifier/`) are strictly separated and will never trigger architecture mismatch crashes.
 
 ---
 

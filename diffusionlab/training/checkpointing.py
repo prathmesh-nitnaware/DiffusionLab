@@ -68,6 +68,7 @@ def load_checkpoint(
     scaler: Any | None = None,
     device: torch.device | str = "cpu",
     strict: bool = True,
+    restore_rng: bool = False,
 ) -> dict[str, Any]:
     """Load model weights and training state from checkpoint file.
 
@@ -79,6 +80,7 @@ def load_checkpoint(
         scaler: Optional GradScaler.
         device: Device to map tensors onto.
         strict: Whether model state_dict keys must match strictly.
+        restore_rng: Whether to restore PyTorch and CUDA RNG states if present.
 
     Returns:
         Checkpoint dictionary with metadata ('epoch', 'global_step', 'loss', 'config').
@@ -108,6 +110,20 @@ def load_checkpoint(
         scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
     if scaler is not None and "scaler_state_dict" in checkpoint:
         scaler.load_state_dict(checkpoint["scaler_state_dict"])
+
+    # Restore RNG states if requested and available
+    if restore_rng and "rng_states" in checkpoint:
+        rng = checkpoint["rng_states"]
+        if isinstance(rng, dict):
+            if rng.get("torch") is not None:
+                torch.set_rng_state(rng["torch"])
+            if (
+                rng.get("cuda") is not None
+                and torch.cuda.is_available()
+                and hasattr(rng["cuda"], "__len__")
+                and len(rng["cuda"]) > 0
+            ):
+                torch.cuda.set_rng_state_all(rng["cuda"])
 
     return checkpoint
 

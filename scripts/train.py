@@ -15,7 +15,6 @@ from diffusionlab.data.datasets import get_dataloaders
 from diffusionlab.diffusion.forward_process import ForwardDiffusion
 from diffusionlab.diffusion.schedules import get_beta_schedule
 from diffusionlab.models.unet import UNet
-from diffusionlab.training.checkpointing import load_checkpoint
 from diffusionlab.training.trainer import DiffusionTrainer
 
 
@@ -33,6 +32,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=None, help="Override batch size")
     parser.add_argument("--lr", type=float, default=None, help="Override learning rate")
     parser.add_argument("--device", type=str, default=None, help="Device to use ('cpu', 'cuda', etc.)")
+    parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
     args = parser.parse_args()
 
     config = load_yaml(args.config)
@@ -50,6 +50,10 @@ def main():
     data_cfg = config.get("data", {})
     train_cfg = config.get("training", {})
 
+    # Seed
+    seed = args.seed if args.seed is not None else train_cfg.get("seed", 42)
+    torch.manual_seed(seed)
+
     # Device
     if args.device:
         device = torch.device(args.device)
@@ -59,6 +63,7 @@ def main():
     print("=== DiffusionLab Training ===")
     print(f"Configuration: {args.config}")
     print(f"Device: {device} (CUDA available: {torch.cuda.is_available()})")
+    print(f"Reproducibility Seed: {seed}")
 
     # 1. Datasets and Loaders
     train_loader, val_loader = get_dataloaders(
@@ -69,7 +74,7 @@ def main():
         val_split=data_cfg.get("val_split", 0.1),
         num_workers=data_cfg.get("num_workers", 0),
         subset_size=data_cfg.get("subset_size", None),
-        use_synthetic_fallback=data_cfg.get("use_synthetic_fallback", True),
+        use_synthetic_fallback=data_cfg.get("use_synthetic_fallback", False),
     )
 
     # 2. Diffusion Schedule & Forward Process
@@ -102,13 +107,6 @@ def main():
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=train_cfg.get("weight_decay", 1e-4))
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=train_cfg.get("epochs", 10), eta_min=1e-6)
 
-    # Resume from checkpoint if requested
-    start_epoch = 0
-    if args.resume:
-        print(f"Resuming training from checkpoint: {args.resume}")
-        ckpt = load_checkpoint(args.resume, model=model, optimizer=optimizer, scheduler=scheduler, device=device)
-        start_epoch = ckpt.get("epoch", 0)
-
     full_config = {
         "model": model_cfg,
         "diffusion": diff_cfg,
@@ -127,8 +125,13 @@ def main():
         config=full_config,
         device=device,
         p_uncond=train_cfg.get("p_uncond", 0.1),
+        seed=seed,
     )
-    trainer.start_epoch = start_epoch
+
+    # Resume from checkpoint if requested
+    if args.resume:
+        print(f"Resuming training from checkpoint: {args.resume}")
+        trainer.resume_from_checkpoint(args.resume, restore_rng=True)
 
     # Execute training or smoke test
     history = trainer.fit(smoke_test=args.smoke_test)
