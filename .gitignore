@@ -34,6 +34,7 @@ ENV/
 
 # Testing & Coverage
 .pytest_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 
@@ -44,3 +45,13 @@ data/
 *.log
 scratch/
 reports/figures/
+*.tfevents*
+events.out.tfevents*
+logs/
+
+# Model Checkpoints & Weights
+*.pt
+*.pth
+*.bin
+*.onnx
+
