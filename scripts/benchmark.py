@@ -22,6 +22,9 @@ def main():
     parser.add_argument("--timesteps", type=int, default=1000, help="Total diffusion steps in schedule")
     parser.add_argument("--base-channels", type=int, default=32, help="U-Net base channels")
     parser.add_argument("--output-dir", type=str, default="runs/benchmarks", help="Output directory for reports")
+    parser.add_argument("--cfg", action="store_true", help="Run Classifier-Free Guidance quality sweep")
+    parser.add_argument("--guidance-scales", nargs="+", type=float, default=[0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0], help="Guidance scales to evaluate")
+    parser.add_argument("--class-label", type=int, default=0, help="Class label for CFG sweep")
     parser.add_argument("--device", type=str, default=None, help="Device to use ('cpu', 'cuda')")
     args = parser.parse_args()
 
@@ -39,15 +42,29 @@ def main():
             base_channels=args.base_channels,
             channel_multipliers=(1, 2),
             num_res_blocks=1,
+            num_classes=10 if args.cfg else None,
             dropout=0.0,
         ).to(device)
 
-    benchmark = SamplingBenchmark(model, schedule, device=device)
-    benchmark.run_suite(
-        step_counts=args.steps,
-        batch_size=args.batch_size,
-        output_dir=args.output_dir,
-    )
+    if args.cfg or (hasattr(model, "num_classes") and model.num_classes is not None):
+        from diffusionlab.evaluation.benchmarks import CFGQualityBenchmark
+
+        print(f"Running CFG Quality Benchmark on {device}...")
+        cfg_bench = CFGQualityBenchmark(model, schedule, device=device)
+        cfg_bench.run_sweep(
+            scales=args.guidance_scales,
+            class_label=args.class_label,
+            num_samples=args.batch_size,
+            steps=args.steps[0] if isinstance(args.steps, list) else 25,
+            output_dir=args.output_dir,
+        )
+    else:
+        benchmark = SamplingBenchmark(model, schedule, device=device)
+        benchmark.run_suite(
+            step_counts=args.steps,
+            batch_size=args.batch_size,
+            output_dir=args.output_dir,
+        )
 
 
 if __name__ == "__main__":

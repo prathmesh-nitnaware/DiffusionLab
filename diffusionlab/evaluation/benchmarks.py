@@ -178,3 +178,149 @@ class SamplingBenchmark:
 
         print(f"Benchmark results saved to: {json_path} and {csv_path}\n")
         return results
+
+
+class CFGQualityBenchmark:
+    """Benchmark suite for Classifier-Free Guidance (CFG).
+
+    Profiles generative quality metrics (intra-class diversity, spatial contrast,
+    saturation rate) and computational efficiency (throughput, batch latency, memory)
+    across a configurable spectrum of guidance scales and sampling step budgets.
+    """
+
+    def __init__(
+        self,
+        model: nn.Module,
+        schedule: BetaSchedule,
+        device: torch.device | str = "cpu",
+    ):
+        from diffusionlab.evaluation.metrics import (
+            compute_contrast_and_saturation,
+            compute_intra_class_diversity,
+        )
+
+        self.device = torch.device(device)
+        self.model = model.to(self.device).eval()
+        self.schedule = schedule
+        self.schedule.to(self.device)
+        self.sampler = DDIMSampler(self.model, self.schedule)
+
+        self._compute_diversity = compute_intra_class_diversity
+        self._compute_contrast = compute_contrast_and_saturation
+
+    @torch.no_grad()
+    def evaluate_scale(
+        self,
+        guidance_scale: float,
+        class_label: int = 0,
+        num_samples: int = 16,
+        steps: int = 25,
+        img_size: int = 28,
+        eta: float = 0.0,
+        seed: int = 42,
+    ) -> dict[str, Any]:
+        """Evaluates generative quality metrics and latency for a single guidance scale."""
+        shape = (num_samples, self.model.in_channels, img_size, img_size)
+        y = torch.full((num_samples,), class_label, dtype=torch.long, device=self.device)
+
+        if self.device.type == "cuda":
+            torch.cuda.reset_peak_memory_stats(self.device)
+            torch.cuda.synchronize(self.device)
+
+        start_time = time.perf_counter()
+        samples, _ = self.sampler.sample(
+            shape=shape,
+            num_inference_steps=min(steps, self.schedule.timesteps),
+            eta=eta,
+            y=y,
+            guidance_scale=guidance_scale,
+            seed=seed,
+            device=self.device,
+            show_progress=False,
+        )
+
+        if self.device.type == "cuda":
+            torch.cuda.synchronize(self.device)
+
+        total_time_s = time.perf_counter() - start_time
+        latency_per_img_ms = (total_time_s / num_samples) * 1000.0
+        throughput_img_s = num_samples / max(1e-6, total_time_s)
+
+        diversity = self._compute_diversity(samples)
+        contrast_stats = self._compute_contrast(samples)
+        memory_stats = get_memory_stats(self.device)
+
+        return {
+            "guidance_scale": float(guidance_scale),
+            "class_label": int(class_label),
+            "steps": int(steps),
+            "num_samples": int(num_samples),
+            "diversity": diversity,
+            "mean_contrast": contrast_stats["mean_contrast"],
+            "saturation_rate": contrast_stats["saturation_rate"],
+            "dynamic_range": contrast_stats["dynamic_range"],
+            "batch_latency_s": round(total_time_s, 4),
+            "latency_per_image_ms": round(latency_per_img_ms, 2),
+            "throughput_images_per_s": round(throughput_img_s, 3),
+            "max_memory_mb": memory_stats["max_allocated_mb"],
+            "samples": samples,
+        }
+
+    def run_sweep(
+        self,
+        scales: Sequence[float] = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0),
+        class_label: int = 0,
+        num_samples: int = 16,
+        steps: int = 25,
+        img_size: int = 28,
+        output_dir: str | Path = "runs/benchmarks/cfg",
+        seed: int = 42,
+        save_grids: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Run full evaluation sweep across guidance scales."""
+        out_path = Path(output_dir)
+        out_path.mkdir(parents=True, exist_ok=True)
+        results = []
+
+        print(f"\n--- Running CFG Guidance Scale Sweep (Class {class_label}, Steps: {steps}, Seed: {seed}) ---")
+
+        for s in scales:
+            res = self.evaluate_scale(
+                guidance_scale=s,
+                class_label=class_label,
+                num_samples=num_samples,
+                steps=steps,
+                img_size=img_size,
+                seed=seed,
+            )
+
+            if save_grids and res["samples"] is not None:
+                grid = tensor_to_pil_grid(res["samples"], nrow=int(num_samples**0.5))
+                grid.save(out_path / f"cfg_scale_{s:.1f}.png")
+
+            clean_res = {k: v for k, v in res.items() if k != "samples"}
+            results.append(clean_res)
+            print(
+                f"  Scale {s:4.1f}: Diversity={res['diversity']:.4f} | "
+                f"Contrast={res['mean_contrast']:.4f} | "
+                f"Saturation={res['saturation_rate']*100:.1f}% | "
+                f"Throughput={res['throughput_images_per_s']:.2f} img/s"
+            )
+
+        # Save JSON
+        json_path = out_path / "cfg_benchmark_results.json"
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=2)
+
+        # Save CSV
+        csv_path = out_path / "cfg_benchmark_results.csv"
+        if results:
+            keys = results[0].keys()
+            with open(csv_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=keys)
+                writer.writeheader()
+                writer.writerows(results)
+
+        print(f"CFG Benchmark results saved to: {json_path} and {csv_path}\n")
+        return results
+
