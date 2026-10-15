@@ -397,7 +397,7 @@ class DiffusionTrainer:
                     "train_loss": history["train_loss"],
                     "val_loss": history["val_loss"],
                     "epoch_times": history["epoch_times"],
-                    "step_losses": history["step_losses"],
+                    "step_losses": history.get("step_losses", []),
                     "total_steps": self.global_step,
                     "total_duration_s": total_duration,
                     "best_val_loss": self.best_val_loss,
@@ -405,6 +405,33 @@ class DiffusionTrainer:
                 f,
                 indent=2,
             )
+
+        # Auto-plot loss curve if matplotlib is available
+        try:
+            import matplotlib.pyplot as plt
+
+            epochs_range = list(range(1, len(history["train_loss"]) + 1))
+            plt.figure(figsize=(7, 4.5), dpi=120)
+            plt.plot(epochs_range, history["train_loss"], marker="o", color="#2563EB", label="Train Loss")
+            if history["val_loss"] and any(v > 0 for v in history["val_loss"]):
+                plt.plot(
+                    epochs_range,
+                    history["val_loss"],
+                    marker="s",
+                    color="#DC2626",
+                    linestyle="--",
+                    label="Val Loss",
+                )
+            plt.title("DiffusionLab: Training Loss Curve", fontweight="bold")
+            plt.xlabel("Epoch")
+            plt.ylabel("MSE Loss")
+            plt.grid(True, linestyle="--", alpha=0.5)
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(self.run_dir / "training_loss.png")
+            plt.close()
+        except Exception as e:
+            print(f"[Warning] Auto-generation of loss plot skipped: {e}")
 
         self.writer.close()
         return history

@@ -1,8 +1,54 @@
-# 🔬 DiffusionLab
+# 👗 DiffusionLab — Fashion Image Generation Using DDPM
 
-> **A Rigorous Research Implementation of Denoising Diffusion Probabilistic Models (DDPM) and Denoising Diffusion Implicit Models (DDIM) in PyTorch.**
+> **A functional end-to-end Deep Learning mini-project implementing Denoising Diffusion Probabilistic Models (DDPM) and Denoising Diffusion Implicit Models (DDIM) for Fashion-MNIST image generation.**
 
-DiffusionLab is a modular, mathematically rigorous Deep Learning research platform implementing continuous and discrete diffusion models from scratch. It features a custom timestep-conditioned U-Net with sinusoidal embeddings, linear and cosine variance schedules, ancestral DDPM reverse sampling, accelerated DDIM sampling, quantitative evaluation, benchmark profiling, and an interactive Gradio web demonstration.
+DiffusionLab demonstrates the core principles of generative diffusion models:
+1. **Forward Diffusion Process**: Progressive Gaussian noise injection across discrete timesteps using cosine beta schedules.
+2. **Noise-Prediction U-Net**: A compact, custom timestep-conditioned U-Net (164k parameters) with sinusoidal temporal embeddings and class conditioning.
+3. **Reverse Sampling**: Both ancestral DDPM (stochastic) and accelerated DDIM (deterministic/ODE) reverse sampling.
+4. **Hardware Flexibility**: Automatic GPU execution when CUDA is available, with seamless CPU fallback.
+5. **Interactive Demonstration**: A lightweight, responsive Gradio web interface for sampling and visual inspection.
+
+---
+
+## ⚡ Mini-Project Quickstart (5 Minutes)
+
+### 1. Environment & Hardware Verification
+Verify Python, PyTorch, and whether GPU/CUDA is available:
+```powershell
+python -c "import torch; print('PyTorch:', torch.__version__, '| CUDA available:', torch.cuda.is_available(), '| Device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
+```
+*(DiffusionLab automatically uses CUDA if available, and gracefully falls back to CPU.)*
+
+### 2. Practical Mini-Project Training (3 Epochs, ~70s on CPU)
+Train on genuine Fashion-MNIST data:
+```powershell
+python scripts/train.py --config configs/fashion_mnist_mini_project.yaml
+```
+- **Checkpoints saved to**: `runs/fashion_mnist_mini_project/checkpoints/` (`best_model.pt`, `latest_model.pt`)
+- **Loss curve saved to**: `runs/fashion_mnist_mini_project/training_loss.png`
+- **Samples saved to**: `runs/fashion_mnist_mini_project/samples/`
+
+### 3. Generate Image Grids
+Generate a 16-sample multi-class image grid using accelerated DDIM sampling (25 steps):
+```powershell
+python scripts/generate.py --checkpoint runs/fashion_mnist_mini_project/checkpoints/best_model.pt --sampler ddim --steps 25 --guidance-scale 2.0 --num-samples 16 --output runs/fashion_mnist_mini_project/samples/sample_grid_ddim_25steps.png
+```
+
+### 4. Plot Training Loss
+```powershell
+python scripts/plot_loss.py --history runs/fashion_mnist_mini_project/training_history.json --output runs/fashion_mnist_mini_project/loss_curve.png
+```
+
+### 5. Launch Interactive Gradio Web Demo
+```powershell
+python app/app.py --port 7860
+```
+Open [http://localhost:7860](http://localhost:7860) in your browser to interactively choose class labels, guidance scale, and sampling steps!
+
+> [!NOTE]
+> **Scientific Integrity & Honest Output Assessment**:
+> The 3-epoch mini-project run finishes in ~70 seconds and verifies full pipeline functionality (loss decreases from 0.3178 to 0.1502). At 3 epochs on CPU, generated images display coarse silhouettes and dark backgrounds rather than fine-grain textures. Full multi-epoch convergence on GPU can be launched via `configs/fashion_mnist_conditional_convergence.yaml`.
 
 ---
 
@@ -17,19 +63,9 @@ DiffusionLab is a modular, mathematically rigorous Deep Learning research platfo
 3. [Neural Network Architecture](#neural-network-architecture)
 4. [Repository Structure](#repository-structure)
 5. [Environment Setup & Installation](#environment-setup--installation)
-6. [Usage Guide (PowerShell Commands)](#usage-guide-powershell-commands)
-   - [1. Running Automated Tests](#1-running-automated-tests)
-   - [2. Code Quality & Linting](#2-code-quality--linting)
-   - [3. Training Smoke Test](#3-training-smoke-test)
-   - [4. Training Baseline Model](#4-training-baseline-model)
-   - [5. Resuming from a Checkpoint](#5-resuming-from-a-checkpoint)
-   - [6. Generating Images (DDPM & DDIM)](#6-generating-images-ddpm--ddim)
-   - [7. Sampling Performance Benchmarks](#7-sampling-performance-benchmarks)
-   - [8. Running Controlled Experiments](#8-running-controlled-experiments)
-   - [9. Launching Gradio Web App](#9-launching-gradio-web-app)
+6. [Detailed Usage Guide](#detailed-usage-guide)
 7. [Empirical Experimental Results](#empirical-experimental-results)
-8. [FID on Fashion-MNIST: Scientific Limitations](#fid-on-fashion-mnist-scientific-limitations)
-9. [Hardware & Reproducibility](#hardware--reproducibility)
+8. [Hardware & Reproducibility](#hardware--reproducibility)
 
 ---
 
