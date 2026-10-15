@@ -316,13 +316,47 @@ Run Experiments A, B, and C with automated figure generation:
 .\.venv\Scripts\python scripts/run_experiments.py --experiments A B C --output-dir reports/experiments
 ```
 
-### 9. Launching Gradio Web App
+### 9. Launching Interactive AI Research Studio
 
-Launch the interactive web demo:
+Launch the comprehensive 6-tab AI research dashboard:
 
 ```powershell
-.\.venv\Scripts\python app/app.py --port 7860
+python app/app.py --port 7860
 ```
+Open [http://localhost:7860](http://localhost:7860) to explore the following research studio modules:
+
+1. **🎨 Generate Studio**:
+   - **Fashion-MNIST Class Selector**: Steer generation across all 10 categories (`T-shirt/top`, `Trouser`, `Pullover`, `Dress`, `Coat`, `Sandal`, `Shirt`, `Sneaker`, `Bag`, `Ankle boot`).
+   - **Sampler Engine**: Choose between ancestral **DDPM** ($T=200$) and accelerated **DDIM** ($5 \text{ to } 50$ steps).
+   - **Conditioning & CFG**: Configurable guidance scale ($w \in [1.0, 5.0]$) and random noise seed control.
+   - **Live Diagnostics**: Displays elapsed inference time, throughput ($\text{img/s}$), active hardware device (`CUDA` / `CPU`), and downloadable image grid.
+
+2. **🔬 Interactive Diffusion Lab**:
+   - **Forward Diffusion Process ($x_0 \to x_t$)**: Select real Fashion-MNIST test images and view closed-form Gaussian noise addition at any timestep $t \in [0, 199]$.
+   - **Live Mathematical Parameters**: Inspect exact values for signal retention ($\sqrt{\bar{\alpha}_t}$), noise scale ($\sqrt{1 - \bar{\alpha}_t}$), step variance ($\beta_t$), and Signal-to-Noise Ratio ($\text{SNR}_\text{dB}$).
+   - **Reverse Trajectory Breakdown ($x_T \to x_0$)**: Record and inspect intermediate denoising states showing how pure Gaussian noise resolves into coherent garment silhouettes.
+
+3. **📈 Training Dashboard**:
+   - **Real Run Analytics**: Select recorded training runs (`runs/fashion_mnist_mini_project`) to inspect genuine loss curves (`loss_curve.png`).
+   - **KPI Metric Cards**: Displays completed epochs, optimizer steps, final train loss, best validation loss, run duration, U-Net parameter count (164,689 weights), and hardware accelerator.
+   - **Resolved Configuration**: Inspect full hyperparameters and architecture settings.
+
+4. **🏷️ Class Explorer**:
+   - **Visual Gallery**: Displays all 10 Fashion-MNIST reference categories.
+   - **Multi-Class Comparison**: Generates side-by-side samples across selected categories holding the initial noise seed constant to clearly visualize semantic steering.
+   - **Graceful Unconditional Handling**: Clearly explains limitations if an unconditional model is loaded rather than simulating fake steering.
+
+5. **📊 Evaluation Dashboard**:
+   - **Quantitative Benchmarks**: Visualizes authentic CFG tradeoff curves, guidance dynamics over timesteps, and sample grids.
+   - **Classifier Evaluation**: Displays independently verified classifier performance (91.25% test accuracy on official Fashion-MNIST test set).
+   - **Scientific Integrity Caveat**: Clear academic callout emphasizing that classifier accuracy alone does not equal perceptual sample fidelity.
+
+6. **📖 About & Methodology**:
+   - Theoretical breakdown covering Markovian forward processes, custom sinusoidal timestep embeddings, wide residual blocks, accelerated DDIM ODE sampling, and Classifier-Free Guidance equations.
+
+> [!TIP]
+> **Robust Checkpoint Loading**:
+> The studio automatically filters checkpoint directories, ensuring only genuine diffusion U-Net weights are loaded. Classifier checkpoints (`runs/classifier/`) are strictly separated and will never trigger architecture mismatch crashes.
 
 ---
 
