@@ -75,3 +75,81 @@ class TestTraining:
         assert history["total_steps"] == 1
         assert len(history["train_loss"]) == 1
         assert (trainer.checkpoint_dir / "latest_model.pt").is_file()
+        assert (trainer.run_dir / "run_metadata.json").is_file()
+        assert (trainer.run_dir / "training_history.json").is_file()
+
+    def test_resume_from_checkpoint_preserves_state(self, setup_trainer, tmp_path):
+        from diffusionlab.training.checkpointing import save_checkpoint
+
+        trainer = setup_trainer
+        ckpt_path = tmp_path / "test_ckpt.pt"
+        save_checkpoint(
+            ckpt_path,
+            model=trainer.model,
+            optimizer=trainer.optimizer,
+            scheduler=trainer.scheduler,
+            epoch=5,
+            global_step=120,
+            loss=0.4521,
+        )
+
+        # Create a fresh trainer and resume
+        fresh_trainer = DiffusionTrainer(
+            model=trainer.model,
+            forward_diff=trainer.forward_diff,
+            train_loader=trainer.train_loader,
+            val_loader=trainer.val_loader,
+            config=trainer.config,
+            device="cpu",
+        )
+        assert fresh_trainer.start_epoch == 0
+        assert fresh_trainer.global_step == 0
+
+        fresh_trainer.resume_from_checkpoint(ckpt_path)
+        assert fresh_trainer.start_epoch == 5
+        assert fresh_trainer.global_step == 120
+        assert pytest.approx(fresh_trainer.best_val_loss, rel=1e-4) == 0.4521
+
+    def test_conditional_train_step_with_dropout(self, tmp_path):
+        model = UNet(
+            in_channels=1,
+            base_channels=16,
+            channel_multipliers=(1, 2),
+            num_res_blocks=1,
+            num_classes=10,
+        )
+        schedule = BetaSchedule("linear", timesteps=50)
+        forward_diff = ForwardDiffusion(schedule)
+        data = torch.randn(8, 1, 28, 28)
+        labels = torch.randint(0, 10, (8,))
+        train_loader = DataLoader(TensorDataset(data, labels), batch_size=4)
+
+        trainer = DiffusionTrainer(
+            model=model,
+            forward_diff=forward_diff,
+            train_loader=train_loader,
+            config={"training": {"epochs": 1, "run_dir": str(tmp_path / "cond_run")}},
+            device="cpu",
+            p_uncond=0.2,
+        )
+
+        loss = trainer.train_step(data[:4], y=labels[:4])
+        assert isinstance(loss, float)
+        assert torch.isfinite(torch.tensor(loss))
+        assert trainer.global_step == 1
+
+    def test_synthetic_fallback_disabled_raises_on_invalid_dir(self, monkeypatch):
+        import diffusionlab.data.datasets as ds_mod
+        from diffusionlab.data.datasets import get_dataloaders
+
+        def mock_download_failure(*args, **kwargs):
+            raise RuntimeError("Mock download failure")
+
+        monkeypatch.setattr(ds_mod, "FashionMNIST", mock_download_failure)
+
+        with pytest.raises(RuntimeError, match="Mock download failure"):
+            get_dataloaders(
+                dataset_name="fashion_mnist",
+                use_synthetic_fallback=False,
+            )
+

@@ -1,0 +1,45 @@
+# Fashion-MNIST Conditional Convergence Smoke Test Configuration
+# Verifies optimizer steps, finite loss, valid gradients, checkpointing, and sampling on genuine data.
+
+model:
+  in_channels: 1
+  out_channels: 1
+  base_channels: 16
+  channel_multipliers: [1, 2]
+  num_res_blocks: 1
+  attention_resolutions: []
+  dropout: 0.0
+  num_classes: 10
+
+diffusion:
+  schedule_type: "cosine"
+  timesteps: 200
+  beta_start: 0.0001
+  beta_end: 0.02
+  cosine_s: 0.008
+
+data:
+  dataset_name: "fashion_mnist"
+  data_dir: "data"
+  img_size: 28
+  batch_size: 16
+  val_split: 0.25
+  num_workers: 0
+  subset_size: 64  # Small subset of official Fashion-MNIST
+  use_synthetic_fallback: false  # Must use genuine data
+
+training:
+  epochs: 1
+  lr: 0.001
+  weight_decay: 0.0001
+  max_grad_norm: 1.0
+  mixed_precision: false
+  p_uncond: 0.1
+  seed: 42
+  log_interval: 1
+  sample_interval_epochs: 1
+  save_interval_epochs: 1
+  num_sample_images: 4
+  run_dir: "runs/smoke_test_conditional_convergence"
+  checkpoint_dir: "runs/smoke_test_conditional_convergence/checkpoints"
+  sample_dir: "runs/smoke_test_conditional_convergence/samples"
