@@ -59,10 +59,15 @@ def evaluate_noise_prediction(
     total_l1 = 0.0
     total_samples = 0
 
+    is_conditional = hasattr(model, "label_emb") and model.label_emb is not None
+
     for i, batch in enumerate(data_loader):
         if max_batches is not None and i >= max_batches:
             break
-        x_0 = batch[0] if isinstance(batch, (list, tuple)) else batch
+        if isinstance(batch, (list, tuple)) and len(batch) >= 2:
+            x_0, y = batch[0], batch[1].to(device)
+        else:
+            x_0, y = (batch[0] if isinstance(batch, (list, tuple)) else batch), None
         x_0 = x_0.to(device)
         B = x_0.shape[0]
 
@@ -70,7 +75,7 @@ def evaluate_noise_prediction(
         noise = torch.randn_like(x_0)
         x_t = forward_diff.q_sample(x_0, t, noise=noise)
 
-        pred_noise = model(x_t, t)
+        pred_noise = model(x_t, t, y=y) if is_conditional else model(x_t, t)
 
         total_mse += nn.functional.mse_loss(pred_noise, noise, reduction="sum").item()
         total_l1 += nn.functional.l1_loss(pred_noise, noise, reduction="sum").item()

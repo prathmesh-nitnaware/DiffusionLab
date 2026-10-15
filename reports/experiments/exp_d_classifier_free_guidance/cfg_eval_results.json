@@ -1,0 +1,28 @@
+{
+  "checkpoint": "D:\\DiffusionLab\\runs\\fashion_mnist_conditional\\checkpoints\\best_model.pt",
+  "epoch": 4,
+  "global_step": 112,
+  "val_mse_loss": 0.135313,
+  "val_l1_loss": 0.239507,
+  "trainable_parameters": 164689,
+  "checkpoint_size_mb": 2.02,
+  "guidance_scales_evaluated": [
+    0.0,
+    1.0,
+    2.0,
+    4.0
+  ],
+  "classes_evaluated": [
+    "t_shirt",
+    "trouser",
+    "pullover",
+    "dress",
+    "coat",
+    "sandal",
+    "shirt",
+    "sneaker",
+    "bag",
+    "ankle_boot"
+  ],
+  "device": "cpu"
+}

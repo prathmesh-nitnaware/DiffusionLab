@@ -44,6 +44,10 @@ def load_model_and_schedule_from_checkpoint(
     num_res_blocks = model_cfg.get("num_res_blocks", 1)
     attention_resolutions = model_cfg.get("attention_resolutions", ())
 
+    num_classes = model_cfg.get("num_classes", None)
+    if num_classes is None and "label_emb.weight" in state_dict:
+        num_classes = state_dict["label_emb.weight"].shape[0] - 1
+
     schedule_type = diff_cfg.get("schedule_type", "cosine")
     timesteps = diff_cfg.get("timesteps", 200)
 
@@ -63,6 +67,7 @@ def load_model_and_schedule_from_checkpoint(
         channel_multipliers=channel_multipliers,
         num_res_blocks=num_res_blocks,
         attention_resolutions=attention_resolutions,
+        num_classes=num_classes,
         dropout=0.0,
     ).to(device)
 

@@ -23,6 +23,8 @@ def main():
     parser.add_argument("--seed", type=int, default=42, help="Random seed for generation")
     parser.add_argument("--output", type=str, default="generated_samples.png", help="Path to save output grid")
     parser.add_argument("--save-trajectory", action="store_true", help="Save intermediate denoising trajectory")
+    parser.add_argument("--class-label", type=int, default=None, help="Class label (0-9, or -1 for null/unconditional)")
+    parser.add_argument("--guidance-scale", type=float, default=1.0, help="Classifier-free guidance scale s (>= 1.0)")
     parser.add_argument("--device", type=str, default=None, help="Device ('cpu', 'cuda')")
     args = parser.parse_args()
 
@@ -35,9 +37,21 @@ def main():
     img_size = config.get("data", {}).get("img_size", 28)
     shape = (args.num_samples, model.in_channels, img_size, img_size)
 
+    y = None
+    if hasattr(model, "num_classes") and model.num_classes is not None:
+        if args.class_label is not None:
+            if args.class_label < 0:
+                y = torch.full((args.num_samples,), model.null_label, dtype=torch.long, device=device)
+            else:
+                y = torch.full((args.num_samples,), args.class_label, dtype=torch.long, device=device)
+        else:
+            y = torch.arange(args.num_samples, device=device) % model.num_classes
+
+    guidance_info = f", Guidance scale: {args.guidance_scale}" if y is not None else ""
+    class_info = f", Class: {args.class_label}" if args.class_label is not None else ""
     print(
         f"Generating {args.num_samples} images using {args.sampler.upper()} "
-        f"(Steps: {args.steps if args.sampler == 'ddim' else schedule.timesteps}, Seed: {args.seed})..."
+        f"(Steps: {args.steps if args.sampler == 'ddim' else schedule.timesteps}, Seed: {args.seed}{guidance_info}{class_info})..."
     )
 
     if args.sampler == "ddpm":
@@ -46,6 +60,8 @@ def main():
             shape=shape,
             device=device,
             seed=args.seed,
+            y=y,
+            guidance_scale=args.guidance_scale,
             save_intermediate_steps=schedule.timesteps // 8 if args.save_trajectory else None,
             show_progress=True,
         )
@@ -57,6 +73,8 @@ def main():
             eta=args.eta,
             device=device,
             seed=args.seed,
+            y=y,
+            guidance_scale=args.guidance_scale,
             save_intermediate=args.save_trajectory,
             show_progress=True,
         )
