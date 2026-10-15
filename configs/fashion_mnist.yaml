@@ -1,0 +1,39 @@
+# Fashion-MNIST DiffusionLab Training Configuration
+model:
+  in_channels: 1
+  out_channels: 1
+  base_channels: 32
+  channel_multipliers: [1, 2, 4]
+  num_res_blocks: 2
+  attention_resolutions: [2]
+  dropout: 0.1
+
+diffusion:
+  schedule_type: "cosine"  # "linear" or "cosine"
+  timesteps: 1000
+  beta_start: 0.0001
+  beta_end: 0.02
+  cosine_s: 0.008
+
+data:
+  dataset_name: "fashion_mnist"
+  data_dir: "data"
+  img_size: 28
+  batch_size: 64
+  val_split: 0.1
+  num_workers: 0
+  use_synthetic_fallback: true
+
+training:
+  epochs: 15
+  lr: 0.0002
+  weight_decay: 0.0001
+  max_grad_norm: 1.0
+  mixed_precision: false
+  log_interval: 20
+  sample_interval_epochs: 1
+  save_interval_epochs: 1
+  num_sample_images: 16
+  run_dir: "runs/fashion_mnist_baseline"
+  checkpoint_dir: "runs/fashion_mnist_baseline/checkpoints"
+  sample_dir: "runs/fashion_mnist_baseline/samples"

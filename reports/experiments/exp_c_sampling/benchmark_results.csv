@@ -1,0 +1,7 @@
+method,steps,batch_size,eta,avg_batch_latency_s,latency_per_image_ms,throughput_images_per_s,max_memory_mb,device
+DDPM,100,4,1.0,2.4247,606.17,1.65,0.0,cpu
+DDIM,100,4,0.0,2.5534,638.36,1.567,0.0,cpu
+DDIM,50,4,0.0,1.2526,313.16,3.193,0.0,cpu
+DDIM,20,4,0.0,0.5482,137.04,7.297,0.0,cpu
+DDIM,10,4,0.0,0.242,60.5,16.529,0.0,cpu
+DDIM,5,4,0.0,0.1426,35.64,28.057,0.0,cpu

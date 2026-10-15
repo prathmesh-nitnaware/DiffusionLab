@@ -1,0 +1,68 @@
+[
+  {
+    "method": "DDPM",
+    "steps": 100,
+    "batch_size": 4,
+    "eta": 1.0,
+    "avg_batch_latency_s": 2.4247,
+    "latency_per_image_ms": 606.17,
+    "throughput_images_per_s": 1.65,
+    "max_memory_mb": 0.0,
+    "device": "cpu"
+  },
+  {
+    "method": "DDIM",
+    "steps": 100,
+    "batch_size": 4,
+    "eta": 0.0,
+    "avg_batch_latency_s": 2.5534,
+    "latency_per_image_ms": 638.36,
+    "throughput_images_per_s": 1.567,
+    "max_memory_mb": 0.0,
+    "device": "cpu"
+  },
+  {
+    "method": "DDIM",
+    "steps": 50,
+    "batch_size": 4,
+    "eta": 0.0,
+    "avg_batch_latency_s": 1.2526,
+    "latency_per_image_ms": 313.16,
+    "throughput_images_per_s": 3.193,
+    "max_memory_mb": 0.0,
+    "device": "cpu"
+  },
+  {
+    "method": "DDIM",
+    "steps": 20,
+    "batch_size": 4,
+    "eta": 0.0,
+    "avg_batch_latency_s": 0.5482,
+    "latency_per_image_ms": 137.04,
+    "throughput_images_per_s": 7.297,
+    "max_memory_mb": 0.0,
+    "device": "cpu"
+  },
+  {
+    "method": "DDIM",
+    "steps": 10,
+    "batch_size": 4,
+    "eta": 0.0,
+    "avg_batch_latency_s": 0.242,
+    "latency_per_image_ms": 60.5,
+    "throughput_images_per_s": 16.529,
+    "max_memory_mb": 0.0,
+    "device": "cpu"
+  },
+  {
+    "method": "DDIM",
+    "steps": 5,
+    "batch_size": 4,
+    "eta": 0.0,
+    "avg_batch_latency_s": 0.1426,
+    "latency_per_image_ms": 35.64,
+    "throughput_images_per_s": 28.057,
+    "max_memory_mb": 0.0,
+    "device": "cpu"
+  }
+]
