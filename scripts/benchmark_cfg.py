@@ -1,10 +1,11 @@
 """Generative Quality Benchmark & Classifier-Free Guidance Evaluation Suite.
 
 Evaluates:
-1. Guidance Scale Sweep: Intra-class diversity, contrast, saturation, and latency across scales.
-2. Steering Vector Dynamics: Magnitude of ||eps_cond - eps_uncond|| over diffusion timesteps.
-3. Visualization: Trade-off curves and steering dynamics plots.
-4. Comprehensive machine-readable metrics (JSON and CSV).
+1. Independent Classifier Accuracy: Top-1 class accuracy on generated samples across guidance scales.
+2. Descriptive Distributional Metrics: Intra-class diversity, spatial contrast, and saturation.
+3. Latency & Variability: Warm-up iterations, repeated latency trials, median latency, and variability.
+4. Timestep Steering Dynamics: Magnitude of ||eps_cond - eps_uncond|| over diffusion timesteps.
+5. All 10 Fashion-MNIST Classes: Full per-class and aggregated summaries.
 """
 
 import argparse
@@ -22,42 +23,51 @@ from diffusionlab.data.datasets import get_dataloaders
 from diffusionlab.data.transforms import tensor_to_pil_grid
 from diffusionlab.diffusion.forward_process import ForwardDiffusion
 from diffusionlab.evaluation.benchmarks import CFGQualityBenchmark
+from diffusionlab.evaluation.classifier import load_or_train_classifier
 from diffusionlab.evaluation.metrics import evaluate_guidance_vector_dynamics
 from diffusionlab.inference.loader import load_model_and_schedule_from_checkpoint
 
 
 def plot_tradeoff_curves(results: list[dict], output_path: Path):
-    """Plot intra-class diversity and pixel saturation rate as a function of guidance scale."""
+    """Plots classifier accuracy, descriptive diversity, and saturation across guidance scales."""
     scales = [r["guidance_scale"] for r in results]
-    diversity = [r["diversity"] for r in results]
-    saturation = [r["saturation_rate"] * 100 for r in results]
-    contrast = [r["mean_contrast"] for r in results]
+    accuracy = [r["aggregated"].get("mean_class_accuracy", 0.0) * 100 for r in results]
+    diversity = [r["aggregated"]["mean_diversity"] for r in results]
+    saturation = [r["aggregated"]["mean_saturation_rate"] * 100 for r in results]
+    contrast = [r["aggregated"]["mean_contrast"] for r in results]
 
-    _fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    _fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 5))
 
-    # Diversity plot
-    ax1.plot(scales, diversity, marker="o", color="#2563eb", linewidth=2, markersize=6)
+    # 1. Independent Classifier Accuracy Plot
+    ax1.plot(scales, accuracy, marker="o", color="#2563eb", linewidth=2.5, markersize=7)
     ax1.set_xlabel("Guidance Scale $s$", fontsize=12)
-    ax1.set_ylabel("Intra-Class Diversity (normalized L2)", fontsize=12)
-    ax1.set_title("Sample Diversity vs. Guidance Scale", fontsize=13, fontweight="bold")
+    ax1.set_ylabel("Generated Sample Accuracy (%)", fontsize=12)
+    ax1.set_title("Semantic Class Consistency\n(Independent Classifier)", fontsize=13, fontweight="bold")
     ax1.grid(True, linestyle="--", alpha=0.6)
 
-    # Saturation & Contrast plot
+    # 2. Descriptive Intra-Class Diversity Plot
+    ax2.plot(scales, diversity, marker="s", color="#7c3aed", linewidth=2.5, markersize=7)
+    ax2.set_xlabel("Guidance Scale $s$", fontsize=12)
+    ax2.set_ylabel("Intra-Class Diversity (normalized L2)", fontsize=12)
+    ax2.set_title("Descriptive Pixel Diversity vs. Scale\n(Higher = greater sample variety)", fontsize=13, fontweight="bold")
+    ax2.grid(True, linestyle="--", alpha=0.6)
+
+    # 3. Descriptive Saturation & Contrast Plot
     color_sat = "#dc2626"
     color_con = "#16a34a"
 
-    ax2.plot(scales, saturation, marker="s", color=color_sat, linewidth=2, label="Saturation Rate (%)")
-    ax2.set_xlabel("Guidance Scale $s$", fontsize=12)
-    ax2.set_ylabel("Pixel Saturation (|x| > 0.95) %", color=color_sat, fontsize=12)
-    ax2.tick_params(axis="y", labelcolor=color_sat)
+    ax3.plot(scales, saturation, marker="^", color=color_sat, linewidth=2, label="Saturation Rate (%)")
+    ax3.set_xlabel("Guidance Scale $s$", fontsize=12)
+    ax3.set_ylabel("Pixel Saturation (|x| > 0.95) %", color=color_sat, fontsize=12)
+    ax3.tick_params(axis="y", labelcolor=color_sat)
 
-    ax2_twin = ax2.twinx()
-    ax2_twin.plot(scales, contrast, marker="^", color=color_con, linewidth=2, linestyle=":", label="Spatial Contrast")
-    ax2_twin.set_ylabel("Spatial Contrast (pixel std)", color=color_con, fontsize=12)
-    ax2_twin.tick_params(axis="y", labelcolor=color_con)
+    ax3_twin = ax3.twinx()
+    ax3_twin.plot(scales, contrast, marker="D", color=color_con, linewidth=2, linestyle=":", label="Spatial Contrast")
+    ax3_twin.set_ylabel("Spatial Contrast (std)", color=color_con, fontsize=12)
+    ax3_twin.tick_params(axis="y", labelcolor=color_con)
 
-    ax2.set_title("Contrast & Saturation Trade-Off", fontsize=13, fontweight="bold")
-    ax2.grid(True, linestyle="--", alpha=0.6)
+    ax3.set_title("Descriptive Contrast & Saturation\n(Monitors activation boundary saturation)", fontsize=13, fontweight="bold")
+    ax3.grid(True, linestyle="--", alpha=0.6)
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=300)
@@ -66,21 +76,21 @@ def plot_tradeoff_curves(results: list[dict], output_path: Path):
 
 
 def plot_guidance_dynamics(dynamics: dict[int, float], output_path: Path):
-    """Plot guidance steering vector norm ||eps_cond - eps_uncond|| over diffusion timesteps."""
+    """Plots the empirical magnitude of ||eps_cond - eps_uncond|| over diffusion timesteps."""
     timesteps = sorted(dynamics.keys())
     norms = [dynamics[t] for t in timesteps]
 
     plt.figure(figsize=(8, 5))
     plt.plot(timesteps, norms, marker="D", color="#9333ea", linewidth=2.5, markersize=7)
     plt.xlabel("Diffusion Timestep $t$", fontsize=12)
-    plt.ylabel(r"Guidance Vector Magnitude $||\epsilon_{cond} - \epsilon_{uncond}||_2$", fontsize=12)
-    plt.title("CFG Steering Vector Dynamics Across Timesteps", fontsize=13, fontweight="bold")
+    plt.ylabel(r"Steering Difference Norm $||\epsilon_{cond} - \epsilon_{uncond}||_2 / \sqrt{D}$", fontsize=12)
+    plt.title("Measured Steering Difference Across Timesteps", fontsize=13, fontweight="bold")
     plt.grid(True, linestyle="--", alpha=0.6)
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=300)
     plt.close()
-    print(f"Guidance dynamics plot saved to: {output_path.resolve()}")
+    print(f"Steering dynamics plot saved to: {output_path.resolve()}")
 
 
 def main():
@@ -98,7 +108,7 @@ def main():
         help="Destination directory for benchmark reports and figures",
     )
     parser.add_argument("--steps", type=int, default=25, help="DDIM sampling steps")
-    parser.add_argument("--num-samples", type=int, default=16, help="Samples per scale evaluation")
+    parser.add_argument("--num-samples-per-class", type=int, default=16, help="Samples generated per class per scale")
     parser.add_argument(
         "--scales",
         nargs="+",
@@ -106,6 +116,8 @@ def main():
         default=[0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0],
         help="Guidance scales to evaluate",
     )
+    parser.add_argument("--warmup", type=int, default=1, help="Warm-up trials before timing")
+    parser.add_argument("--trials", type=int, default=3, help="Repeated latency trials")
     parser.add_argument("--device", type=str, default=None, help="Device to use ('cpu', 'cuda')")
     args = parser.parse_args()
 
@@ -119,35 +131,63 @@ def main():
     data_cfg = config.get("data", {})
     forward_diff = ForwardDiffusion(schedule)
 
-    # 1. Guidance Scale Sweep Benchmark
-    print("\n=== Phase 1: Guidance Scale Generative Quality Sweep ===")
-    benchmark = CFGQualityBenchmark(model, schedule, device=device)
+    # 1. Independent Classifier Setup & Real Data Validation
+    print("\n=== Phase 1: Independent Evaluator Classifier Setup & Real Data Validation ===")
+    classifier, real_test_acc = load_or_train_classifier(
+        data_dir=data_cfg.get("data_dir", "data"),
+        ckpt_path="runs/classifier/fashion_mnist_classifier.pt",
+        device=device,
+    )
+    real_validation_data = {
+        "model": "FashionMNISTClassifier",
+        "held_out_real_test_accuracy": round(real_test_acc, 4),
+        "device": str(device),
+        "notes": "Independently trained convolutional classifier verified on held-out real validation data.",
+    }
+    with open(output_dir / "real_classifier_validation.json", "w", encoding="utf-8") as f:
+        json.dump(real_validation_data, f, indent=2)
+    print(f"Verified Independent Classifier Accuracy on Real Data: {real_test_acc*100:.2f}%\n")
+
+    # 2. Guidance Scale Sweep Benchmark Across All 10 Classes
+    print(f"=== Phase 2: Guidance Scale Sweep Across All 10 Classes (Steps: {args.steps}) ===")
+    benchmark = CFGQualityBenchmark(model, schedule, classifier=classifier, device=device)
     sweep_results = benchmark.run_sweep(
         scales=args.scales,
-        class_label=0,  # T-shirt
-        num_samples=args.num_samples,
+        classes=tuple(range(10)),
+        num_samples_per_class=args.num_samples_per_class,
         steps=args.steps,
         output_dir=output_dir,
+        num_warmup=args.warmup,
+        num_trials=args.trials,
     )
 
-    # Copy sweep results to output_dir
+    # Save detailed JSON containing per-class breakdown
     json_path = output_dir / "cfg_benchmark_results.json"
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(sweep_results, f, indent=2)
 
-    csv_path = output_dir / "cfg_benchmark_results.csv"
-    if sweep_results:
-        with open(csv_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=sweep_results[0].keys())
-            writer.writeheader()
-            writer.writerows(sweep_results)
+    # Save per-class metrics CSV
+    per_class_rows = []
+    for scale_res in sweep_results:
+        s = scale_res["guidance_scale"]
+        for c, m in scale_res["per_class"].items():
+            row = {"guidance_scale": s, "class_label": c}
+            row.update(m)
+            per_class_rows.append(row)
 
-    # 2. Guidance Trade-off Curves Plot
-    print("\n=== Phase 2: Generating Trade-Off Visualizations ===")
+    if per_class_rows:
+        per_class_csv = output_dir / "cfg_benchmark_per_class.csv"
+        with open(per_class_csv, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=per_class_rows[0].keys())
+            writer.writeheader()
+            writer.writerows(per_class_rows)
+
+    # 3. Guidance Trade-off Curves Plot
+    print("\n=== Phase 3: Generating Trade-Off Visualizations ===")
     plot_tradeoff_curves(sweep_results, output_dir / "cfg_tradeoff_curves.png")
 
-    # 3. Steering Dynamics Across Timesteps
-    print("\n=== Phase 3: Evaluating Steering Vector Dynamics Across Timesteps ===")
+    # 4. Steering Dynamics Across Timesteps
+    print("\n=== Phase 4: Evaluating Steering Vector Magnitude Across Timesteps ===")
     _, val_loader = get_dataloaders(
         dataset_name=data_cfg.get("dataset_name", "fashion_mnist"),
         data_dir=data_cfg.get("data_dir", "data"),
@@ -177,13 +217,13 @@ def main():
 
     plot_guidance_dynamics(dynamics, output_dir / "guidance_dynamics_over_timesteps.png")
 
-    # 4. Multi-class visual comparison grid with fixed noise
-    print("\n=== Phase 4: Fixed-Seed Multi-Class Guidance Progression Grid ===")
-    classes = [0, 1, 3, 5, 8]  # T-shirt, Trouser, Dress, Sandal, Bag
+    # 5. Multi-class visual comparison grid with fixed noise
+    print("\n=== Phase 5: Fixed-Seed Multi-Class Guidance Progression Grid ===")
+    display_classes = [0, 1, 3, 5, 8]  # T-shirt, Trouser, Dress, Sandal, Bag
     comparison_scales = [0.0, 1.0, 2.0, 4.0]
     comparison_samples = []
 
-    for c in classes:
+    for c in display_classes:
         y = torch.full((1,), c, dtype=torch.long, device=device)
         for s in comparison_scales:
             sample, _ = benchmark.sampler.sample(

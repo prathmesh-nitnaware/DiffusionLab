@@ -1,10 +1,14 @@
-"""Unit tests for generative quality evaluation metrics and CFG benchmarking suite."""
+"""Unit tests for generative quality evaluation metrics, independent classifier, and CFG benchmarking suite."""
 
 import torch
 
 from diffusionlab.diffusion.forward_process import ForwardDiffusion
 from diffusionlab.diffusion.schedules import get_beta_schedule
 from diffusionlab.evaluation.benchmarks import CFGQualityBenchmark
+from diffusionlab.evaluation.classifier import (
+    FashionMNISTClassifier,
+    evaluate_generated_accuracy,
+)
 from diffusionlab.evaluation.metrics import (
     compute_contrast_and_saturation,
     compute_intra_class_diversity,
@@ -79,8 +83,27 @@ def test_guidance_vector_dynamics():
         assert dynamics[t_val] >= 0.0
 
 
-def test_cfg_quality_benchmark_sweep(tmp_path):
-    """Verify CFGQualityBenchmark executes sweep and produces structured outputs."""
+def test_fashion_mnist_classifier_and_generated_accuracy():
+    """Verify independent classifier forward pass and generated accuracy metrics."""
+    classifier = FashionMNISTClassifier(num_classes=10)
+    classifier.eval()
+
+    # Forward pass shape
+    dummy_input = torch.randn(4, 1, 28, 28)
+    logits = classifier(dummy_input)
+    assert logits.shape == (4, 10)
+
+    # Generated accuracy function
+    targets = torch.tensor([0, 1, 2, 3])
+    results = evaluate_generated_accuracy(classifier, dummy_input, targets, device="cpu")
+    assert "overall_accuracy" in results
+    assert "per_class_accuracy" in results
+    assert "predictions" in results
+    assert 0.0 <= results["overall_accuracy"] <= 1.0
+
+
+def test_measure_latency_trials():
+    """Verify repeated latency trials with warm-up return median and variability."""
     schedule = get_beta_schedule("linear", timesteps=10)
     model = UNet(
         in_channels=1,
@@ -92,22 +115,64 @@ def test_cfg_quality_benchmark_sweep(tmp_path):
     )
 
     benchmark = CFGQualityBenchmark(model, schedule, device="cpu")
+    latency_info = benchmark.measure_latency_trials(
+        guidance_scale=1.0,
+        batch_size=2,
+        steps=2,
+        img_size=8,
+        num_warmup=1,
+        num_trials=2,
+    )
+
+    assert "median_batch_latency_s" in latency_info
+    assert "latency_std_s" in latency_info
+    assert "latency_iqr_s" in latency_info
+    assert "median_latency_per_image_ms" in latency_info
+    assert "throughput_images_per_s" in latency_info
+    assert len(latency_info["trial_times_s"]) == 2
+
+
+def test_cfg_quality_benchmark_sweep(tmp_path):
+    """Verify CFGQualityBenchmark executes multi-class sweep with classifier and produces structured outputs."""
+    schedule = get_beta_schedule("linear", timesteps=10)
+    model = UNet(
+        in_channels=1,
+        out_channels=1,
+        base_channels=8,
+        channel_multipliers=(1, 2),
+        num_res_blocks=1,
+        num_classes=10,
+    )
+    classifier = FashionMNISTClassifier(num_classes=10)
+
+    benchmark = CFGQualityBenchmark(model, schedule, classifier=classifier, device="cpu")
     results = benchmark.run_sweep(
         scales=[0.0, 2.0],
-        class_label=1,
-        num_samples=2,
+        classes=(0, 1),
+        num_samples_per_class=2,
         steps=2,
         img_size=8,
         output_dir=tmp_path,
+        num_warmup=1,
+        num_trials=2,
         save_grids=True,
     )
 
     assert len(results) == 2
     for r in results:
-        assert "diversity" in r
-        assert "mean_contrast" in r
-        assert "saturation_rate" in r
-        assert "throughput_images_per_s" in r
+        assert "guidance_scale" in r
+        assert "aggregated" in r
+        assert "mean_diversity" in r["aggregated"]
+        assert "mean_class_accuracy" in r["aggregated"]
+        assert "mean_contrast" in r["aggregated"]
+        assert "mean_saturation_rate" in r["aggregated"]
+        assert "latency" in r
+        assert "median_batch_latency_s" in r["latency"]
+        assert "metadata" in r
+        assert r["metadata"]["num_classes_evaluated"] == 2
+        assert "per_class" in r
+        assert 0 in r["per_class"]
+        assert 1 in r["per_class"]
 
     assert (tmp_path / "cfg_benchmark_results.json").exists()
     assert (tmp_path / "cfg_benchmark_results.csv").exists()

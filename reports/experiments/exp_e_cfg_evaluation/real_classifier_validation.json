@@ -1,0 +1,6 @@
+{
+  "model": "FashionMNISTClassifier",
+  "held_out_real_test_accuracy": 0.9228,
+  "device": "cpu",
+  "notes": "Independently trained convolutional classifier verified on held-out real validation data."
+}
