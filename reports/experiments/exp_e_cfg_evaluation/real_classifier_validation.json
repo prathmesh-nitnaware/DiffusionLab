@@ -1,0 +1,11 @@
+{
+  "checkpoint_path": "D:\\DiffusionLab\\runs\\classifier\\fashion_mnist_classifier.pt",
+  "dataset_name": "FashionMNIST",
+  "data_directory": "D:\\DiffusionLab\\data",
+  "is_synthetic_fallback": false,
+  "official_test_accuracy": 0.9125,
+  "official_test_samples": 10000,
+  "train_val_split_accuracy": 0.9228,
+  "train_val_split_samples": 6000,
+  "train_samples": 54000
+}
